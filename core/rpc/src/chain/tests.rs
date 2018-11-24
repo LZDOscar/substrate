@@ -177,7 +177,7 @@ fn should_return_finalised_hash() {
 	);
 
 	// finalise
-	client.client.finalize_block(BlockId::number(1), true).unwrap();
+	client.client.finalize_block(BlockId::number(1), None, true).unwrap();
 	assert_matches!(
 		client.finalised_head(),
 		Ok(ref x) if x == &client.client.block_hash(1).unwrap().unwrap()
@@ -234,7 +234,7 @@ fn should_notify_about_finalised_block() {
 
 		let builder = api.client.new_block().unwrap();
 		api.client.justify_and_import(BlockOrigin::Own, builder.bake().unwrap()).unwrap();
-		api.client.finalize_block(BlockId::number(1), true).unwrap();
+		api.client.finalize_block(BlockId::number(1), None, true).unwrap();
 	}
 
 	// assert initial head sent.

@@ -621,7 +621,7 @@ impl<B, E, Block, RA> Client<B, E, Block, RA> where
 		// ensure parent block is finalized to maintain invariant that
 		// finality is called sequentially.
 		if finalized {
-			self.apply_finality(parent_hash, last_best, make_notifications)?;
+			self.apply_finality(parent_hash, None, last_best, make_notifications)?;
 		}
 
 		let tags = self.transaction_tags(parent_hash, &body)?;
@@ -725,7 +725,13 @@ impl<B, E, Block, RA> Client<B, E, Block, RA> where
 	}
 
 	/// Finalizes all blocks up to given.
-	fn apply_finality(&self, block: Block::Hash, best_block: Block::Hash, notify: bool) -> error::Result<()> {
+	fn apply_finality(
+		&self,
+		block: Block::Hash,
+		justification: Option<Justification>,
+		best_block: Block::Hash,
+		notify: bool,
+	) -> error::Result<()> {
 		// find tree route from last finalized to given block.
 		let last_finalized = self.backend.blockchain().last_finalized()?;
 
@@ -756,9 +762,14 @@ impl<B, E, Block, RA> Client<B, E, Block, RA> where
 			// `block`.
 		}
 
-		for finalize_new in route_from_finalized.enacted() {
-			self.backend.finalize_block(BlockId::Hash(finalize_new.hash))?;
+		let enacted = route_from_finalized.enacted();
+		assert!(enacted.len() > 1);
+		for finalize_new in &enacted[..enacted.len() - 1] {
+			self.backend.finalize_block(BlockId::Hash(finalize_new.hash), None)?;
 		}
+
+		assert_eq!(enacted.last().map(|e| e.hash), Some(block));
+		self.backend.finalize_block(BlockId::Hash(block), justification)?;
 
 		if notify {
 			// sometimes when syncing, tons of blocks can be finalized at once.
@@ -788,7 +799,7 @@ impl<B, E, Block, RA> Client<B, E, Block, RA> where
 	/// Pass a flag to indicate whether finality notifications should be propagated.
 	/// This is usually tied to some synchronization state, where we don't send notifications
 	/// while performing major synchronization work.
-	pub fn finalize_block(&self, id: BlockId<Block>, notify: bool) -> error::Result<()> {
+	pub fn finalize_block(&self, id: BlockId<Block>, justification: Option<Justification>, notify: bool) -> error::Result<()> {
 		let last_best = self.backend.blockchain().info()?.best_hash;
 		let to_finalize_hash = match id {
 			BlockId::Hash(h) => h,
@@ -796,7 +807,7 @@ impl<B, E, Block, RA> Client<B, E, Block, RA> where
 				.ok_or_else(|| error::ErrorKind::UnknownBlock(format!("No block with number {:?}", n)))?,
 		};
 
-		self.apply_finality(to_finalize_hash, last_best, notify)
+		self.apply_finality(to_finalize_hash, justification, last_best, notify)
 	}
 
 	/// Attempts to revert the chain by `n` blocks. Returns the number of blocks that were
@@ -1078,6 +1089,9 @@ impl<B, E, Block, RA> consensus::BlockImport<Block> for Client<B, E, Block, RA> 
 			finalized,
 			auxiliary,
 		} = import_block;
+
+		assert!(justification.is_some() && finalized || justification.is_none());
+
 		let parent_hash = header.parent_hash().clone();
 
 		match self.backend.blockchain().status(BlockId::Hash(parent_hash))? {
